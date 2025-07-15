@@ -44,10 +44,11 @@ def sonar_pr_issues():
                     "key": issue['component'],
                     "from": start, "to": end
                 })
-                # The response is a direct list of line objects.
-                # We iterate over the list itself, not a 'lines' property.
-                if snippet_data:
-                    snippet_text = "\n".join(obj.get("code","") for obj in snippet_data)
+                # The response is a JSON object with a nested list of lines.
+                # We need to access the correct path to the list.
+                if snippet_data and 'sources' in snippet_data and snippet_data['sources']:
+                    lines = snippet_data['sources'][0].get('lines', [])
+                    snippet_text = "\n".join(obj.get("code","") for obj in lines)
                 else:
                     snippet_text = "[Could not parse snippet data]"
             except Exception as e:
