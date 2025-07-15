@@ -34,14 +34,16 @@ class SonarClient:
         })
 
     def get_latest_pr_number(self, project_key):
-        pr_data = self.call("pull_requests/list", {
-            "project": project_key,
-            "ps": 1,  # page size = 1
-            "sort": "UPDATE_DATE",
-            "status": "OPEN"
+        # fallback by scanning recent issues
+        issues_data = self.call("issues/search", {
+            "componentKeys": project_key,
+            "sort": "CREATION_DATE",
+            "ps": 50
         })
-        if pr_data and "pullRequests" in pr_data and pr_data["pullRequests"]:
-            return pr_data["pullRequests"][0]["branch"]  # PRs are tied to branches
+        if issues_data and "issues" in issues_data:
+            for issue in issues_data["issues"]:
+                if "pullRequest" in issue:
+                    return issue["pullRequest"]
         return None
 
 
@@ -99,8 +101,6 @@ def get_sonar_data():
             return jsonify({"error": "No pull request analysis found in recent issues."}), 404
 
     return fetch_issues_with_code(project_key, pr_number)
-
-
 
 
 def fetch_issues_with_code(project_key, pr_number):
