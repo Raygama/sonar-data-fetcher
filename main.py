@@ -26,6 +26,7 @@ class SonarClient:
             "componentKeys": project_key,
             "pullRequest": pr_number
         })
+    
 
     def get_source_for_component(self, component_key):
         return self.call("sources/show", {
@@ -45,6 +46,22 @@ class SonarClient:
 
 
 sonar = SonarClient(SONAR_TOKEN)
+
+def get_latest_pr_branch_from_issues(project_key):
+    """
+    Extracts the most recent PR branch name by inspecting recent issues.
+    """
+    issues_data = sonar.call("issues/search", {
+        "componentKeys": project_key,
+        "sort": "CREATION_DATE",
+        "ps": 50  # get last 50 issues, increase if needed
+    })
+
+    if issues_data and "issues" in issues_data:
+        for issue in issues_data["issues"]:
+            if "pullRequest" in issue:
+                return issue["pullRequest"]  # this is the branch name SonarCloud uses
+    return None
 
 
 @app.route('/get-latest-sonar-data', methods=['GET'])
@@ -66,9 +83,6 @@ def get_latest_sonar_data():
 
 @app.route('/get-sonar-data', methods=['GET'])
 def get_sonar_data():
-    """
-    Fetches SonarQube issues for a specific or latest pull request.
-    """
     project_key = request.args.get('projectKey')
     pr_number = request.args.get('prNumber')  # Optional
 
@@ -78,21 +92,14 @@ def get_sonar_data():
     if not SONAR_TOKEN:
         return jsonify({"error": "SONAR_TOKEN is not configured."}), 500
 
+    # Auto fallback: try to detect the latest PR
     if not pr_number:
-        # Fetch the latest PR branch from SonarCloud
-        pr_data = sonar.call("pull_requests/list", {
-            "project": project_key,
-            "ps": 1,
-            "sort": "UPDATE_DATE",
-            "status": "OPEN"
-        })
-
-        if pr_data and "pullRequests" in pr_data and pr_data["pullRequests"]:
-            pr_number = pr_data["pullRequests"][0]["branch"]
-        else:
-            return jsonify({"error": "No active pull requests found."}), 404
+        pr_number = get_latest_pr_branch_from_issues(project_key)
+        if not pr_number:
+            return jsonify({"error": "No pull request analysis found in recent issues."}), 404
 
     return fetch_issues_with_code(project_key, pr_number)
+
 
 
 
