@@ -1,44 +1,45 @@
-import os, requests
-from flask import Flask, request, jsonify
+import os
+import requests
+from flask import Flask, jsonify, request
 
 app = Flask(__name__)
-SONAR_TOKEN = os.environ["SONAR_TOKEN"]
-BASE = "https://sonarcloud.io/api"
 
-@app.route("/get-sonar-pr-issues")
+SONAR_TOKEN = os.environ.get("SONAR_TOKEN")
+SONAR_API = "https://sonarcloud.io/api"
+
+def sonar_call(path, params):
+    headers = {"Authorization": f"Bearer {SONAR_TOKEN}"}
+    resp = requests.get(f"{SONAR_API}/{path}", headers=headers, params=params)
+    resp.raise_for_status()
+    return resp.json()
+
+@app.route('/get-sonar-pr-issues')
 def sonar_pr_issues():
-    pk = request.args.get("projectKey")
-    pr = request.args.get("prNumber")
-    if not pk or not pr:
-        return jsonify(error="Missing projectKey or prNumber"), 400
+    project = request.args['projectKey']
+    pr = request.args['prNumber']
+    issues = sonar_call("issues/search", {"componentKeys": project, "pullRequest": pr}).get("issues", [])
+    out = []
+    for issue in issues:
+        lr = issue.get('textRange', {})
+        line = lr.get('startLine')
+        if line:
+            start = max(1, line - 25)
+            end = line + 25
+            try:
+                snippet = sonar_call("sources/lines", {
+                    "component": issue['component'], 
+                    "from": start, "to": end
+                })
+                # API returns list of {"line":#, "code":...}
+                snippet_text = "\n".join(obj.get("code","") for obj in snippet)
+            except Exception as e:
+                snippet_text = f"[error fetching source: {e}]"
+        else:
+            snippet_text = "[no line info]"
 
-    h = {"Authorization": f"Bearer {SONAR_TOKEN}"}
-    issues = requests.get(f"{BASE}/issues/search",
-                          headers=h,
-                          params={"componentKeys": pk, "pullRequest": pr}).json().get("issues", [])
+        issue['sourceSnippet'] = snippet_text
+        out.append(issue)
+    return jsonify({"project": project, "pr": pr, "issues": out})
 
-    enriched = []
-    for i in issues:
-        comp = i["component"]
-        line = i.get("line")
-        snippet = "[no source]"
-
-        if comp and line:
-            lo = max(1, line-25)
-            hi = line+25
-            r = requests.get(f"{BASE}/sources/lines",
-                             headers=h,
-                             params={"key": comp, "from": lo, "to": hi})
-            if r.ok:
-                arr = r.json()
-                snippet = "\n".join(x["code"] for x in arr)
-            else:
-                snippet = f"[error: {r.status_code} {r.reason}]"
-
-        i["sourceSnippet"] = snippet
-        enriched.append(i)
-
-    return jsonify({"project": pk, "pr": pr, "issues": enriched})
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
+if __name__ == '__main__':
+    app.run()
