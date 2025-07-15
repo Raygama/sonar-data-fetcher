@@ -1,38 +1,63 @@
-import os, requests
+import os
+import requests
 from flask import Flask, jsonify, request
 
 app = Flask(__name__)
+
 SONAR_TOKEN = os.getenv("SONAR_TOKEN")
-BASE = "https://sonarcloud.io/api"
-HEADERS = {"Authorization": f"Bearer {SONAR_TOKEN}"}
+BASE_URL = "https://sonarcloud.io/api"
 
-def sonarc_get(endpoint, params):
-    r = requests.get(f"{BASE}/{endpoint}", headers=HEADERS, params=params)
-    r.raise_for_status()
-    return r.json()
+class SonarClient:
+    def __init__(self, token):
+        self.headers = {"Authorization": f"Bearer {token}"}
 
-@app.route("/get-sonar-pr-issues", methods=["GET"])
-def get_issues():
+    def get(self, endpoint, params):
+        url = f"{BASE_URL}/{endpoint}"
+        resp = requests.get(url, headers=self.headers, params=params)
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_pr_issues(self, project_key, pr_number):
+        return self.get("issues/search", {
+            "componentKeys": project_key,
+            "pullRequest": pr_number,
+            "ps": 100
+        })
+
+    def get_source_lines(self, component, issue_line, context=25):
+        start = max(issue_line - context, 1)
+        end = issue_line + context
+        params = {"key": component, "from": start, "to": end}
+        resp = requests.get(f"{BASE_URL}/sources/lines", headers=self.headers, params=params)
+        resp.raise_for_status()
+        # expecting list of { 'line': int, 'code': str }
+        return resp.json()
+
+sonar = SonarClient(SONAR_TOKEN)
+
+@app.route('/get-sonar-pr-issues', methods=['GET'])
+def get_sonar_pr_issues():
+    project = request.args.get("projectKey")
     pr = request.args.get("prNumber")
-    proj = request.args.get("projectKey")
-    if not pr or not proj:
-        return jsonify(error="Missing params"),400
+    if not project or not pr:
+        return jsonify({"error": "Missing projectKey or prNumber"}), 400
 
-    issues = sonarc_get("issues/search", {"componentKeys": proj, "pullRequest": pr}).get("issues", [])
-    out = []
-    for iss in issues:
-        line = iss.get("line")
-        comp = iss.get("component")
-        if line and comp:
-            start = max(1, line - 25)
-            end = line + 25
-            snippet = sonarc_get("sources/show", {"key": comp, "from": start, "to": end, "branch": f"refs/pull/{pr}/head"})
-            lines = snippet.get("sources", [{}])[0].get("lines", [])
-            iss["sourceCode"] = "\n".join(f"{l['line']:4d}: {l['code']}" for l in lines)
-        else:
-            iss["sourceCode"] = ""
-        out.append(iss)
-    return jsonify(project=proj, pr=pr, issues=out)
+    issues_resp = sonar.get_pr_issues(project, pr)
+    issues = issues_resp.get("issues", [])
 
-if __name__=="__main__":
-    app.run()
+    enriched = []
+    for issue in issues:
+        comp = issue.get("component")
+        if comp and "line" in issue:
+            try:
+                source_lines = sonar.get_source_lines(comp, issue["line"], context=25)
+                issue["sourceCode"] = "\n".join(f"{ln['line']:5d}: {ln['code']}"
+                                               for ln in source_lines)
+            except Exception:
+                issue["sourceCode"] = "[error fetching source]"
+        enriched.append(issue)
+
+    return jsonify({"project": project, "pr": pr, "issues": enriched})
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=int(os.getenv("PORT", 5000)), debug=True)
