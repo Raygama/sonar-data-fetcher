@@ -39,15 +39,16 @@ def sonar_pr_issues():
             start = max(1, line - 25)
             end = line + 25
             try:
-                # The API expects the parameter 'key', not 'component'.
+                # The API expects the parameter 'key'
                 snippet_data = make_api_call("sources/lines", {
                     "key": issue['component'],
                     "from": start, "to": end
                 })
-                # The response is a JSON object with a nested list of lines.
-                # We need to access the correct path to the list.
-                if snippet_data and 'sources' in snippet_data and snippet_data['sources']:
-                    lines = snippet_data['sources'][0].get('lines', [])
+                
+                # The response from /api/sources/lines is a JSON object with a "lines" key.
+                # This corrected code properly accesses that key.
+                if snippet_data and 'lines' in snippet_data:
+                    lines = snippet_data.get('lines', [])
                     snippet_text = "\n".join(obj.get("code","") for obj in lines)
                 else:
                     snippet_text = "[Could not parse snippet data]"
