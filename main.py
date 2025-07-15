@@ -4,11 +4,13 @@ from flask import Flask, jsonify, request
 
 app = Flask(__name__)
 
-SONAR_TOKEN = os.environ.get("SONAR_TOKEN")
+SONAR_TOKEN = os.getenv("SONAR_TOKEN")
 SONAR_API_BASE_URL = "https://sonarcloud.io/api"
 
 class SonarClient:
     def __init__(self, token):
+        if not token:
+            raise ValueError("SONAR_TOKEN is not set")
         self.token = token
         self.headers = {"Authorization": f"Bearer {self.token}"}
 
@@ -27,30 +29,51 @@ class SonarClient:
     def get_source_for_component(self, component_key):
         return self.call("sources/show", {"key": component_key})
 
+# Initialize once globally
+try:
+    sonar = SonarClient(SONAR_TOKEN)
+except ValueError as e:
+    print(f"Initialization error: {e}")
+    sonar = None
 
 @app.route('/get-sonar-pr-issues', methods=['GET'])
 def get_sonar_pr_issues():
+    if sonar is None:
+        return jsonify({"error": "Server misconfigured: SONAR_TOKEN missing"}), 500
+
     project_key = request.args.get('projectKey')
-    pr_number = request.args.get('prNumber')
+    pr_number   = request.args.get('prNumber')
     if not project_key or not pr_number:
         return jsonify({"error": "Missing projectKey or prNumber"}), 400
+
     try:
         issues_data = sonar.get_issues_for_pr(project_key, pr_number)
     except requests.HTTPError as e:
-        return jsonify({"error": str(e), "details": e.response.text}), e.response.status_code
+        return jsonify({
+            "error": "SonarCloud API request failed",
+            "status": e.response.status_code,
+            "details": e.response.text
+        }), e.response.status_code
 
-    if not issues_data.get("issues"):
+    issues = issues_data.get("issues", [])
+    if not issues:
         return jsonify({"error": f"No issues found for PR {pr_number}"}), 404
 
     enriched = []
-    for issue in issues_data["issues"]:
+    for issue in issues:
         comp = issue.get("component")
-        src = sonar.get_source_for_component(comp)
-        issue["sourceCode"] = (
-            "\n".join([l["code"] for l in src["sources"][0]["lines"]])
-            if src and src.get("sources") else None
-        )
-        enriched.append(issue)
+        src = None
+        try:
+            src = sonar.get_source_for_component(comp)
+        except requests.HTTPError:
+            pass
+        code = None
+        if src and src.get("sources"):
+            code = "\n".join(line["code"] for line in src["sources"][0].get("lines", []))
+        enriched.append({
+            **issue,
+            "sourceCode": code or "Source unavailable"
+        })
 
     return jsonify({
         "projectKey": project_key,
@@ -58,7 +81,9 @@ def get_sonar_pr_issues():
         "issues": enriched
     })
 
+@app.route('/')
+def index():
+    return jsonify({"status": "running"})
 
 if __name__ == '__main__':
-    sonar = SonarClient(SONAR_TOKEN)
     app.run(host='0.0.0.0', port=81)
