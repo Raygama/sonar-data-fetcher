@@ -28,8 +28,8 @@ def sonar_pr_issues():
     This endpoint fetches SonarQube issues for a specific pull request
     and enriches them with their corresponding source code snippet.
     """
-    project = request.args['projectKey']
-    pr = request.args['prNumber']
+    project = request.args.get('projectKey')
+    pr = request.args.get('prNumber')
     issues = make_api_call("issues/search", {"componentKeys": project, "pullRequest": pr}).get("issues", [])
     out = []
     for issue in issues:
@@ -39,14 +39,15 @@ def sonar_pr_issues():
             start = max(1, line - 25)
             end = line + 25
             try:
-                # FIX 1: The API expects the parameter 'key', not 'component'.
+                # The API expects the parameter 'key', not 'component'.
                 snippet_data = make_api_call("sources/lines", {
                     "key": issue['component'],
                     "from": start, "to": end
                 })
-                # FIX 2: The response contains a 'lines' array inside the JSON object.
-                if snippet_data and 'lines' in snippet_data:
-                    snippet_text = "\n".join(obj.get("code","") for obj in snippet_data['lines'])
+                # The response is a direct list of line objects.
+                # We iterate over the list itself, not a 'lines' property.
+                if snippet_data:
+                    snippet_text = "\n".join(obj.get("code","") for obj in snippet_data)
                 else:
                     snippet_text = "[Could not parse snippet data]"
             except Exception as e:
