@@ -22,51 +22,31 @@ def make_api_call(endpoint, params={}):
         print(f"Error calling SonarCloud API: {e}")
         return None
 
-@app.route('/get-sonar-data', methods=['GET'])
-def get_sonar_data():
+@app.route('/get-sonar-pr-issues')
+def sonar_pr_issues():
     """
     This endpoint fetches SonarQube issues for a specific pull request
-    and enriches them with their corresponding source code.
+    and enriches them with their corresponding source code snippet.
     """
-    # Get parameters from the request URL (sent by Flowise)
-    project_key = request.args.get('projectKey')
-    pr_number = request.args.get('prNumber')
-
-    if not project_key or not pr_number:
-        return jsonify({"error": "Missing required parameters: projectKey and prNumber"}), 400
-
-    if not SONAR_TOKEN:
-        return jsonify({"error": "SONAR_TOKEN is not configured in the environment."}), 500
-
-    # 1. Fetch the list of issues for the pull request
-    issue_params = {
-        "componentKeys": project_key,
-        "pullRequest": pr_number
-    }
-    issue_data = make_api_call("issues/search", params=issue_params)
-
-    if issue_data is None or "issues" not in issue_data:
-        return jsonify({"error": "Failed to fetch issues from SonarCloud."}), 500
-
-    processed_issues = []
-
-    # 2. For each issue, fetch its source code
-    for issue in issue_data["issues"]:
-        line_range = issue.get('textRange', {})
-        line = line_range.get('startLine')
-
+    project = request.args['projectKey']
+    pr = request.args['prNumber']
+    issues = make_api_call("issues/search", {"componentKeys": project, "pullRequest": pr}).get("issues", [])
+    out = []
+    for issue in issues:
+        lr = issue.get('textRange', {})
+        line = lr.get('startLine')
         if line:
             start = max(1, line - 25)
             end = line + 25
             try:
-                # Use the correct parameter name 'key' instead of 'component'
+                # FIX 1: The API expects the parameter 'key', not 'component'.
                 snippet_data = make_api_call("sources/lines", {
-                    "key": issue['component'], # <-- THIS IS THE FIX
+                    "key": issue['component'],
                     "from": start, "to": end
                 })
-                # The API returns a JSON object with a 'sources' list
-                if snippet_data and 'sources' in snippet_data:
-                    snippet_text = "\n".join(line_obj.get("code","") for line_obj in snippet_data['sources'][0]['lines'])
+                # FIX 2: The response contains a 'lines' array inside the JSON object.
+                if snippet_data and 'lines' in snippet_data:
+                    snippet_text = "\n".join(obj.get("code","") for obj in snippet_data['lines'])
                 else:
                     snippet_text = "[Could not parse snippet data]"
             except Exception as e:
@@ -75,10 +55,8 @@ def get_sonar_data():
             snippet_text = "[no line info]"
 
         issue['sourceSnippet'] = snippet_text
-        processed_issues.append(issue)
-
-    # 3. Return the final, enriched list of issues
-    return jsonify({"project": project_key, "pr": pr_number, "issues": processed_issues})
+        out.append(issue)
+    return jsonify({"project": project, "pr": pr, "issues": out})
 
 @app.route('/')
 def index():
