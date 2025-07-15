@@ -66,14 +66,34 @@ def get_latest_sonar_data():
 
 @app.route('/get-sonar-data', methods=['GET'])
 def get_sonar_data():
-    """Same as before, but uses explicit PR number."""
+    """
+    Fetches SonarQube issues for a specific or latest pull request.
+    """
     project_key = request.args.get('projectKey')
-    pr_number = request.args.get('prNumber')
+    pr_number = request.args.get('prNumber')  # Optional
 
-    if not project_key or not pr_number:
-        return jsonify({"error": "Missing required parameters: projectKey and prNumber"}), 400
+    if not project_key:
+        return jsonify({"error": "Missing required parameter: projectKey"}), 400
+
+    if not SONAR_TOKEN:
+        return jsonify({"error": "SONAR_TOKEN is not configured."}), 500
+
+    if not pr_number:
+        # Fetch the latest PR branch from SonarCloud
+        pr_data = sonar.call("pull_requests/list", {
+            "project": project_key,
+            "ps": 1,
+            "sort": "UPDATE_DATE",
+            "status": "OPEN"
+        })
+
+        if pr_data and "pullRequests" in pr_data and pr_data["pullRequests"]:
+            pr_number = pr_data["pullRequests"][0]["branch"]
+        else:
+            return jsonify({"error": "No active pull requests found."}), 404
 
     return fetch_issues_with_code(project_key, pr_number)
+
 
 
 def fetch_issues_with_code(project_key, pr_number):
