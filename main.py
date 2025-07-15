@@ -5,7 +5,7 @@ from flask import Flask, jsonify, request
 # Initialize the Flask web application
 app = Flask(__name__)
 
-# Get API tokens from the environment variables
+# Get API tokens from the environment variables. WOrking vERS
 SONAR_TOKEN = os.environ.get('SONAR_TOKEN')
 GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN') # You will need to add this to Render secrets
 
